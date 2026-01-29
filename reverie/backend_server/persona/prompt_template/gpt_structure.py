@@ -8,6 +8,7 @@ import json
 import random
 import openai
 import time 
+import os
 
 from utils import *
 from langchain.llms import Ollama
@@ -64,9 +65,37 @@ llm = GPT4All(
 '''
 
 ### *** Ollama ***
-llm = Ollama(base_url="http://localhost:11434",
-             model=ollama_model,
-             callback_manager=CallbackManager([CallbackHandler()]))
+llm = None
+if llm_provider == "ollama":
+  llm = Ollama(
+    base_url="http://localhost:11434",
+    model=ollama_model,
+    callback_manager=CallbackManager([CallbackHandler()]),
+  )
+elif llm_provider == "openai_compat":
+  # OpenAI-compatible Chat Completions endpoint.
+  #
+  # IMPORTANT: do NOT hardcode secrets in git.
+  # Set key via environment variable:
+  #   export LLM_API_KEY="..."
+  #
+  # Then configure base/model in `reverie/backend_server/utils.py`:
+  #   openai_compat_api_base = "https://<host>/v1"
+  #   openai_compat_model = "<model-name>"
+  openai.api_key = os.environ.get("LLM_API_KEY", "") or openai_api_key
+  openai.api_base = openai_compat_api_base.rstrip("/")
+else:
+  raise ValueError(f"Unsupported llm_provider: {llm_provider}")
+
+def _openai_compat_chat(prompt: str) -> str:
+  """
+  Call an OpenAI-compatible /v1/chat/completions endpoint using openai==0.27.x.
+  """
+  completion = openai.ChatCompletion.create(
+    model=openai_compat_model,
+    messages=[{"role": "user", "content": prompt}],
+  )
+  return completion["choices"][0]["message"]["content"]
 
 def temp_sleep(seconds=0.1):
   time.sleep(seconds)
@@ -74,7 +103,7 @@ def temp_sleep(seconds=0.1):
 def ChatGPT_single_request(prompt): 
   temp_sleep()
   try:
-    response = llm(prompt)
+    response = _openai_compat_chat(prompt) if llm_provider == "openai_compat" else llm(prompt)
   except ValueError:
     print("Requested tokens exceed context window")
     ### TODO: Add map-reduce or splitter to handle this error.
@@ -96,7 +125,7 @@ def ChatGPT_request(prompt,parameters):
   """
   # temp_sleep()
   try:
-    response = llm(prompt)
+    response = _openai_compat_chat(prompt) if llm_provider == "openai_compat" else llm(prompt)
   except ValueError:
     print("Requested tokens exceed context window")
     ### TODO: Add map-reduce or splitter to handle this error.
@@ -188,7 +217,7 @@ def GPT_request(prompt,parameters):
   """
   # temp_sleep()
   try:
-    response = llm(prompt)
+    response = _openai_compat_chat(prompt) if llm_provider == "openai_compat" else llm(prompt)
   except ValueError:
     print("Requested tokens exceed context window")
     ### TODO: Add map-reduce or splitter to handle this error.

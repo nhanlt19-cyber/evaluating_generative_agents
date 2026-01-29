@@ -1,168 +1,351 @@
+# Generative Agents chạy local (Ollama / Llama.cpp / GPT4All) — Hướng dẫn triển khai & demo (Tiếng Việt)
 
+![Smallville](cover.png)
 
-# Generative Agents with Llama2
-
-<p align="center" width="100%">
-<img src="cover.png" alt="Smallville" style="width: 80%; min-width: 300px; display: block; margin: auto;">
-</p>
-
-This is a fork of the repository that accompanies the research paper titled "Generative Agents: Interactive Simulacra of Human Behavior." The original repo was default configured for OpenAI, but using a hosted API can be [costly](https://twitter.com/NickADobos/status/1690790151503724544?s=20). This fork configures the simulation to run locally with various open source LLMs. A few frameworks (llama.cpp, ollama.ai, gpt4all) make it easy to run open source LLMs locally and I integrated with all 3 of these frameworks for flexible local sim testing across a range of open source LLMs (some options shown below):
+Repo này là một fork của dự án đi kèm paper **“Generative Agents: Interactive Simulacra of Human Behavior”**. Bản gốc mặc định dùng OpenAI API (tốn chi phí); fork này đã tích hợp để chạy **LLM local** thông qua các framework như **Ollama**, **llama.cpp**, **GPT4All** (thông qua LangChain).
 
 ![oss_llm](https://github.com/rlancemartin/generative_agents/assets/122662504/be4d142f-a4f1-4819-ae7b-628e28207fc6)
 
-## <img src="https://joonsungpark.s3.amazonaws.com:443/static/assets/characters/profile/Isabella_Rodriguez.png" alt="Generative Isabella">   Setting Up the Environment 
+---
 
-### Step 1. To run locally, select an open source LLM and embeedings of interest
+## Tổng quan kiến trúc (cần chạy 2 server song song)
 
-[Ollama](https://python.langchain.com/docs/integrations/llms/ollama) is one option for easy / quick setup:
+- **Environment server (Django)**: `environment/frontend_server`  
+  Phục vụ UI map, demo, replay; giao tiếp với backend bằng các endpoint như `process_environment` / `update_environment`.
+- **Simulation server (Python)**: `reverie/backend_server/reverie.py`  
+  Tạo/tiếp tục simulation, gọi LLM + embeddings, ghi movement vào `environment/frontend_server/storage`.
 
-* [Download the app](https://ollama.ai/download)
-* Fetch a model, e.g., for Llama-13b: `$ ollama pull llama2:13b`
+Bạn cần **mở 2 cửa sổ terminal** và chạy đồng thời cả hai.
 
-[LlamaCpp](https://github.com/ggerganov/llama.cpp) or [GPT4All](https://gpt4all.io/index.html) are also great options [see notes on setup here](https://python.langchain.com/docs/use_cases/question_answering/how_to/local_retrieval_qa).
+---
 
-The LLM is set at the top of `gpt_structure.py`.
+## Yêu cầu hệ thống
 
-The rest of the steps follow the original repo, except you don't need to supply an API key if running an LLM locally:
+- **Python**: khuyến nghị **Python 3.9.x** (repo gốc test 3.9.12)
+- **LLM local (khuyến nghị)**: **Ollama** (HTTP `http://localhost:11434`)
+- **RAM/CPU**: tuỳ theo model + số agent (xem mục “Cấu hình server” phía dưới)
 
-In addition, you will need to run an local embeddings model.
-[GPT4All](https://python.langchain.com/docs/integrations/text_embedding/gpt4all) is a good option.
+---
 
-### Step 2. Generate Utils File
-In the `reverie/backend_server` folder (where `reverie.py` is located), create a new file titled `utils.py` and copy and paste the content below into the file:
-```
-# Put your name
-key_owner = "<Name>"
+## Bước 1 — Cài LLM local (khuyến nghị: Ollama)
 
-maze_assets_loc = "../../environment/frontend_server/static_dirs/assets"
-env_matrix = f"{maze_assets_loc}/the_ville/matrix"
-env_visuals = f"{maze_assets_loc}/the_ville/visuals"
+### 1.1 Cài Ollama và pull model
 
-fs_storage = "../../environment/frontend_server/storage"
-fs_temp_storage = "../../environment/frontend_server/temp_storage"
+- Cài Ollama theo hướng dẫn chính thức của Ollama.
+- Pull model, ví dụ:
 
-collision_block_id = "32125"
-
-# Verbose 
-debug = True
+```bash
+ollama pull llama2:13b
 ```
 
-LangChain's LLM integration make it east to test different options.
+### 1.2 Chọn model dùng trong project
 
-Supply API keys for LLMs you want to test that require them.
- 
-Of course, for Llama2 or other open source models running locally, you will not need a key.
+Project mặc định đang cấu hình Ollama trong `reverie/backend_server/persona/prompt_template/gpt_structure.py`:
 
+- `Ollama(base_url="http://localhost:11434", model=ollama_model, ...)`
+
+Tên model lấy từ biến `ollama_model` trong `reverie/backend_server/utils.py` (repo đã có sẵn file này).
+
+---
+
+## (Tuỳ chọn) Dùng LLM từ server khác (OpenAI-compatible `/v1/chat/completions`)
+
+Nếu bạn có một server LLM cung cấp API tương thích OpenAI Chat Completions (endpoint dạng `/v1/chat/completions`), bạn có thể cấu hình để Reverie gọi sang server đó thay vì Ollama local.
+
+### 1) Cấu hình `utils.py`
+
+Mở `reverie/backend_server/utils.py` và đặt:
+
+- `llm_provider = "openai_compat"`
+- `openai_compat_api_base = "https://<host>/v1"`  (chỉ base `/v1`, không thêm `/chat/completions`)
+- `openai_compat_model = "<ten-model>"` (ví dụ model bạn được server hỗ trợ)
+
+### 2) Set API key qua biến môi trường (không commit key)
+
+Trên Ubuntu:
+
+```bash
+export LLM_API_KEY="YOUR_KEY_HERE"
 ```
-# Copy and paste any API Keys for LLMs you want to test
-openai_api_key = "<Your OpenAI API>"
-anthropic_api_key = "<Your OpenAI API>"
-etc
+
+Sau đó chạy backend như bình thường (`python reverie.py`).
+
+---
+
+## Bước 2 — Tạo môi trường Python & cài dependencies
+
+### 2.1 Tạo virtualenv
+
+#### Ubuntu (khuyến nghị khi bạn deploy trên server)
+
+Tại thư mục root của repo:
+
+```bash
+sudo apt update
+sudo apt install -y python3 python3-venv python3-pip
+
+python3 -m venv .venv
+source .venv/bin/activate
+python -m pip install --upgrade pip
 ```
- 
-### Step 3. Install requirements.txt
-Install everything listed in the `requirements.txt` file (w/ up a virtualenv as usual). A note on Python version: we tested our environment on Python 3.9.12. 
 
-## <img src="https://joonsungpark.s3.amazonaws.com:443/static/assets/characters/profile/Klaus_Mueller.png" alt="Generative Klaus">   Running a Simulation 
-To run a new simulation, you will need to concurrently start two servers: the environment server and the agent simulation server.
+#### Windows PowerShell (nếu bạn chạy local trên Windows)
 
-### Step 1. Starting the Environment Server
-Again, the environment is implemented as a Django project, and as such, you will need to start the Django server. To do this, first navigate to `environment/frontend_server` (this is where `manage.py` is located) in your command line. Then run the following command:
+Tại thư mục root của repo:
 
-    python manage.py runserver
+```bash
+python -m venv .venv
+.\.venv\Scripts\Activate.ps1
+python -m pip install --upgrade pip
+```
 
-Then, on your favorite browser, go to [http://localhost:8000/](http://localhost:8000/). If you see a message that says, "Your environment server is up and running," your server is running properly. Ensure that the environment server continues to run while you are running the simulation, so keep this command-line tab open! (Note: I recommend using either Chrome or Safari. Firefox might produce some frontend glitches, although it should not interfere with the actual simulation.)
+### 2.2 Cài requirements
 
-### Step 2. Starting the Simulation Server
-Open up another command line (the one you used in Step 1 should still be running the environment server, so leave that as it is). Navigate to `reverie/backend_server` and run `reverie.py`.
+Khuyến nghị cài bằng file root:
 
-    python reverie.py
-This will start the simulation server. A command-line prompt will appear, asking the following: "Enter the name of the forked simulation: ". To start a 3-agent simulation with Isabella Rodriguez, Maria Lopez, and Klaus Mueller, type the following:
-    
-    base_the_ville_isabella_maria_klaus
-The prompt will then ask, "Enter the name of the new simulation: ". Type any name to denote your current simulation (e.g., just "test-simulation" will do for now).
+```bash
+pip install -r requirements.txt
+```
 
-    test-simulation
-Keep the simulator server running. At this stage, it will display the following prompt: "Enter option: "
+### 2.3 Kiểm tra file cấu hình `utils.py` (bắt buộc cho backend)
 
-### Step 3. Running and Saving the Simulation
-On your browser, navigate to [http://localhost:8000/simulator_home](http://localhost:8000/simulator_home). You should see the map of Smallville, along with a list of active agents on the map. You can move around the map using your keyboard arrows. Please keep this tab open. To run the simulation, type the following command in your simulation server in response to the prompt, "Enter option":
+Backend simulation import `from utils import *`, nên bạn **phải có**:
 
-    run <step-count>
-Note that you will want to replace `<step-count>` above with an integer indicating the number of game steps you want to simulate. For instance, if you want to simulate 100 game steps, you should input `run 100`. One game step represents 10 seconds in the game.
+- `reverie/backend_server/utils.py`
 
+Trong file này, cần chú ý:
 
-Your simulation should be running, and you will see the agents moving on the map in your browser. Once the simulation finishes running, the "Enter option" prompt will re-appear. At this point, you can simulate more steps by re-entering the run command with your desired game steps, exit the simulation without saving by typing `exit`, or save and exit by typing `fin`.
+- **`ollama_model`**: đặt đúng tên model bạn đã `ollama pull`
+- **`fs_storage` / `fs_temp_storage`**: mặc định đã trỏ sang `environment/frontend_server/...`
 
-The saved simulation can be accessed the next time you run the simulation server by providing the name of your simulation as the forked simulation. This will allow you to restart your simulation from the point where you left off.
+---
 
-### Step 4. Replaying a Simulation
-You can replay a simulation that you have already run simply by having your environment server running and navigating to the following address in your browser: `http://localhost:8000/replay/<simulation-name>/<starting-time-step>`. Please make sure to replace `<simulation-name>` with the name of the simulation you want to replay, and `<starting-time-step>` with the integer time-step from which you wish to start the replay.
+## Bước 3 — Chạy Environment Server (Django)
 
-For instance, by visiting the following link, you will initiate a pre-simulated example, starting at time-step 1:  
-[http://localhost:8000/replay/July1_the_ville_isabella_maria_klaus-step-3-20/1/](http://localhost:8000/replay/July1_the_ville_isabella_maria_klaus-step-3-20/1/)
+Mở terminal #1:
 
-### Step 5. Demoing a Simulation
-You may have noticed that all character sprites in the replay look identical. We would like to clarify that the replay function is primarily intended for debugging purposes and does not prioritize optimizing the size of the simulation folder or the visuals. To properly demonstrate a simulation with appropriate character sprites, you will need to compress the simulation first. To do this, open the `compress_sim_storage.py` file located in the `reverie` directory using a text editor. Then, execute the `compress` function with the name of the target simulation as its input. By doing so, the simulation file will be compressed, making it ready for demonstration.
+```bash
+cd environment\frontend_server
+python manage.py runserver 0.0.0.0:8000
+```
 
-To start the demo, go to the following address on your browser: `http://localhost:8000/demo/<simulation-name>/<starting-time-step>/<simulation-speed>`. Note that `<simulation-name>` and `<starting-time-step>` denote the same things as mentioned above. `<simulation-speed>` can be set to control the demo speed, where 1 is the slowest, and 5 is the fastest. For instance, visiting the following link will start a pre-simulated example, beginning at time-step 1, with a medium demo speed:  
-[http://localhost:8000/demo/July1_the_ville_isabella_maria_klaus-step-3-20/1/3/](http://localhost:8000/demo/July1_the_ville_isabella_maria_klaus-step-3-20/1/3/)
+### Truy cập từ laptop qua IP server
 
-### Tips
-We've noticed that OpenAI's API can hang when it reaches the hourly rate limit. When this happens, you may need to restart your simulation. For now, we recommend saving your simulation often as you progress to ensure that you lose as little of the simulation as possible when you do need to stop and rerun it. Running these simulations, at least as of early 2023, could be somewhat costly, especially when there are many agents in the environment.
+Trên laptop, mở:
 
-## <img src="https://joonsungpark.s3.amazonaws.com:443/static/assets/characters/profile/Maria_Lopez.png" alt="Generative Maria">   Simulation Storage Location
-All simulations that you save will be located in `environment/frontend_server/storage`, and all compressed demos will be located in `environment/frontend_server/compressed_storage`. 
+- `http://<IP_SERVER>:8000/`
+- `http://<IP_SERVER>:8000/simulator_home`
 
-## <img src="https://joonsungpark.s3.amazonaws.com:443/static/assets/characters/profile/Sam_Moore.png" alt="Generative Sam">   Customization
+### Nếu Django báo `DisallowedHost`
 
-There are two ways to optionally customize your simulations. 
+Vì bạn truy cập qua IP, Django có thể chặn. Cách nhanh nhất cho môi trường nội bộ:
 
-### Author and Load Agent History
-First is to initialize agents with unique history at the start of the simulation. To do this, you would want to 1) start your simulation using one of the base simulations, and 2) author and load agent history. More specifically, here are the steps:
+Sửa `environment/frontend_server/frontend_server/settings/local.py` (hoặc file settings đang dùng) và thêm:
 
-#### Step 1. Starting Up a Base Simulation 
-There are two base simulations included in the repository: `base_the_ville_n25` with 25 agents, and `base_the_ville_isabella_maria_klaus` with 3 agents. Load one of the base simulations by following the steps until step 2 above. 
+- `ALLOWED_HOSTS = ["<IP_SERVER>", "localhost", "127.0.0.1"]`
 
-#### Step 2. Loading a History File 
-Then, when prompted with "Enter option: ", you should load the agent history by responding with the following command:
+Hoặc tạm thời (chỉ nội bộ/dev) dùng:
 
-    call -- load history the_ville/<history_file_name>.csv
-Note that you will need to replace `<history_file_name>` with the name of an existing history file. There are two history files included in the repo as examples: `agent_history_init_n25.csv` for `base_the_ville_n25` and `agent_history_init_n3.csv` for `base_the_ville_isabella_maria_klaus`. These files include semicolon-separated lists of memory records for each of the agents—loading them will insert the memory records into the agents' memory stream.
+- `ALLOWED_HOSTS = ["*"]`
 
-#### Step 3. Further Customization 
-To customize the initialization by authoring your own history file, place your file in the following folder: `environment/frontend_server/static_dirs/assets/the_ville`. The column format for your custom history file will have to match the example history files included. Therefore, we recommend starting the process by copying and pasting the ones that are already in the repository.
+### Mở port trên Ubuntu (nếu có firewall)
 
-### Create New Base Simulations
-For a more involved customization, you will need to author your own base simulation files. The most straightforward approach would be to copy and paste an existing base simulation folder, renaming and editing it according to your requirements. This process will be simpler if you decide to keep the agent names unchanged. However, if you wish to change their names or increase the number of agents that the Smallville map can accommodate, you might need to directly edit the map using the [Tiled](https://www.mapeditor.org/) map editor.
+Nếu server bật `ufw`:
 
+```bash
+sudo ufw allow 8000/tcp
+sudo ufw status
+```
 
-## <img src="https://joonsungpark.s3.amazonaws.com:443/static/assets/characters/profile/Eddy_Lin.png" alt="Generative Eddy">   Authors and Citation 
+Mở trình duyệt:
+
+- `http://localhost:8000/` (landing)
+
+---
+
+## Bước 4 — Chạy Simulation Server (backend)
+
+Mở terminal #2:
+
+```bash
+cd reverie\backend_server
+python reverie.py
+```
+
+Bạn sẽ nhập:
+
+- `Enter the name of the forked simulation:` (ví dụ `base_the_ville_isabella_maria_klaus`)
+- `Enter the name of the new simulation:` (ví dụ `test-sim-001`)
+
+Giữ terminal backend chạy, nó sẽ hiện: `Enter option:`
+
+---
+
+## Bước 5 — Mở UI simulator và chạy step
+
+Mở:
+
+- `http://localhost:8000/simulator_home`
+
+Chạy simulation bằng lệnh trong terminal backend:
+
+```text
+run <step-count>
+```
+
+Ví dụ: `run 100` (1 step = 10 giây thời gian trong game)
+
+Các lệnh hay dùng:
+
+- `run 100`: chạy 100 steps
+- `save`: lưu trạng thái
+- `fin`: lưu và thoát
+- `exit`: thoát và xoá folder simulation vừa tạo
+- `autorun <max_steps> <save_frequency>`: tự chạy và thỉnh thoảng lưu bản copy (vd `autorun 1440 60`)
+
+---
+
+## Replay một simulation đã chạy
+
+Khi Django server đang chạy, mở:
+
+- `http://localhost:8000/replay/<simulation-name>/<starting-time-step>/`
+
+Ví dụ (có sẵn trong repo):
+
+- `http://localhost:8000/replay/July1_the_ville_isabella_maria_klaus-step-3-20/1/`
+
+---
+
+## Demo “đẹp” (có sprite đúng) — cần compress simulation
+
+Replay chủ yếu để debug, visuals có thể không tối ưu. Để demo đúng sprite, cần **compress** simulation trước.
+
+### 1) Compress
+
+Mở terminal tại thư mục `reverie`:
+
+```bash
+cd reverie
+python -c "from compress_sim_storage import compress; compress('test-sim-001')"
+```
+
+Output nằm ở:
+
+- `environment/frontend_server/compressed_storage/<sim_code>/`
+
+### 2) Mở demo
+
+Mở:
+
+- `http://localhost:8000/demo/<simulation-name>/<starting-time-step>/<simulation-speed>/`
+
+Trong đó:
+
+- `simulation-speed`: 1 chậm nhất, 5 nhanh hơn
+
+Ví dụ:
+
+- `http://localhost:8000/demo/July1_the_ville_isabella_maria_klaus-step-3-20/1/3/`
+
+---
+
+## Vị trí dữ liệu simulation
+
+- **Simulation lưu (khi bạn `save`/`fin`)**: `environment/frontend_server/storage/`
+- **Demo đã compress**: `environment/frontend_server/compressed_storage/`
+
+---
+
+## Tuỳ biến (agents/history)
+
+### 1) Load history cho agent (khi đang ở prompt `Enter option:`)
+
+```text
+call -- load history the_ville/<history_file_name>.csv
+```
+
+Gợi ý file mẫu (trong assets):
+
+- `the_ville/agent_history_init_n3.csv` (base 3 agents)
+- `the_ville/agent_history_init_n25.csv` (base 25 agents)
+
+History CSV đặt tại:
+
+- `environment/frontend_server/static_dirs/assets/the_ville/`
+
+### 2) Tạo base simulation mới
+
+Cách đơn giản nhất: copy một folder base trong `environment/frontend_server/storage/base_*` rồi đổi tên/sửa dữ liệu.
+Nếu muốn đổi map / tăng số agent hỗ trợ, có thể cần chỉnh map bằng [Tiled](https://www.mapeditor.org/).
+
+---
+
+## Troubleshooting nhanh
+
+- **Mở `http://localhost:8000/simulator_home` thấy trang báo chưa chạy backend**:
+  - Backend `python reverie.py` chưa chạy, hoặc chưa tạo `temp_storage/curr_step.json`.
+  - Hãy chạy backend và nhập fork/new simulation xong rồi refresh trang.
+- **Lỗi `ModuleNotFoundError: utils` ở backend**:
+  - Đảm bảo có file `reverie/backend_server/utils.py` và bạn đang `cd reverie\backend_server` khi chạy `python reverie.py`.
+- **LLM không trả lời / không kết nối Ollama**:
+  - Đảm bảo Ollama đang chạy và truy cập được `http://localhost:11434`.
+  - Đảm bảo `ollama_model` trong `reverie/backend_server/utils.py` đúng tên model bạn đã `ollama pull`.
+
+---
+
+## Gợi ý triển khai nội bộ an toàn hơn (khuyến nghị)
+
+Nếu bạn không muốn mở port 8000 ra LAN, bạn có thể dùng SSH port-forward từ laptop:
+
+```bash
+ssh -L 8000:127.0.0.1:8000 <user>@<IP_SERVER>
+```
+
+Sau đó trên laptop mở `http://localhost:8000/` (traffic được tunnel vào server).
+
+---
+
+## Cấu hình server 32 vCPU / 32GB RAM có phù hợp không?
+
+- **Chạy simulation + Django**: **phù hợp** (32 vCPU / 32GB RAM là dư cho phần server + I/O + Python).
+- **Chạy LLM local**: phụ thuộc model và có GPU hay không.
+
+Gợi ý nhanh:
+
+- **CPU-only**: nên dùng model nhỏ/quantized (7B–13B) để tốc độ chấp nhận được; chạy `base_the_ville_n25` (25 agents) sẽ rất chậm.
+- **Có GPU**: tốc độ inference cải thiện rõ rệt, phù hợp chạy nhiều agents/steps hơn.
+
+Nếu bạn cho mình biết server có **GPU (VRAM bao nhiêu)** và bạn định dùng model nào (7B/13B/70B), mình sẽ ước lượng tốc độ và gợi ý cấu hình model hợp lý cho demo.
+
+---
+
+## Authors and Citation
 
 **Authors:** Joon Sung Park, Joseph C. O'Brien, Carrie J. Cai, Meredith Ringel Morris, Percy Liang, Michael S. Bernstein
 
-Please cite our paper if you use the code or data in this repository. 
-```
-@inproceedings{Park2023GenerativeAgents,  
-author = {Park, Joon Sung and O'Brien, Joseph C. and Cai, Carrie J. and Morris, Meredith Ringel and Liang, Percy and Bernstein, Michael S.},  
-title = {Generative Agents: Interactive Simulacra of Human Behavior},  
-year = {2023},  
-publisher = {Association for Computing Machinery},  
-address = {New York, NY, USA},  
-booktitle = {In the 36th Annual ACM Symposium on User Interface Software and Technology (UIST '23)},  
-keywords = {Human-AI interaction, agents, generative AI, large language models},  
-location = {San Francisco, CA, USA},  
+Please cite our paper if you use the code or data in this repository.
+
+```bibtex
+@inproceedings{Park2023GenerativeAgents,
+author = {Park, Joon Sung and O'Brien, Joseph C. and Cai, Carrie J. and Morris, Meredith Ringel and Liang, Percy and Bernstein, Michael S.},
+title = {Generative Agents: Interactive Simulacra of Human Behavior},
+year = {2023},
+publisher = {Association for Computing Machinery},
+address = {New York, NY, USA},
+booktitle = {In the 36th Annual ACM Symposium on User Interface Software and Technology (UIST '23)},
+keywords = {Human-AI interaction, agents, generative AI, large language models},
+location = {San Francisco, CA, USA},
 series = {UIST '23}
 }
 ```
 
-## <img src="https://joonsungpark.s3.amazonaws.com:443/static/assets/characters/profile/Wolfgang_Schulz.png" alt="Generative Wolfgang">   Acknowledgements
+## Acknowledgements
 
-We encourage you to support the following three amazing artists who have designed the game assets for this project, especially if you are planning to use the assets included here for your own project: 
-* Background art: [PixyMoon (@_PixyMoon\_)](https://twitter.com/_PixyMoon_)
-* Furniture/interior design: [LimeZu (@lime_px)](https://twitter.com/lime_px)
-* Character design: [ぴぽ (@pipohi)](https://twitter.com/pipohi)
+We encourage you to support the following three amazing artists who have designed the game assets for this project, especially if you are planning to use the assets included here for your own project:
+
+- Background art: [PixyMoon (@_PixyMoon_)](https://twitter.com/_PixyMoon_)
+- Furniture/interior design: [LimeZu (@lime_px)](https://twitter.com/lime_px)
+- Character design: [ぴぽ (@pipohi)](https://twitter.com/pipohi)
 
 In addition, we thank Lindsay Popowski, Philip Guo, Michael Terry, and the Center for Advanced Study in the Behavioral Sciences (CASBS) community for their insights, discussions, and support. Lastly, all locations featured in Smallville are inspired by real-world locations that Joon has frequented as an undergraduate and graduate student---he thanks everyone there for feeding and supporting him all these years.
-
-
