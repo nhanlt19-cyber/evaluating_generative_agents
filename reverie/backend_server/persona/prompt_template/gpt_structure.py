@@ -90,12 +90,19 @@ else:
 def _openai_compat_chat(prompt: str) -> str:
   """
   Call an OpenAI-compatible /v1/chat/completions endpoint using openai==0.27.x.
+  Any transport/API errors are converted to ValueError so callers' retry logic
+  (safe_generate_response / ChatGPT_request / GPT_request) can handle them.
   """
-  completion = openai.ChatCompletion.create(
-    model=openai_compat_model,
-    messages=[{"role": "user", "content": prompt}],
-  )
-  return completion["choices"][0]["message"]["content"]
+  try:
+    completion = openai.ChatCompletion.create(
+      model=openai_compat_model,
+      messages=[{"role": "user", "content": prompt}],
+    )
+    return completion["choices"][0]["message"]["content"]
+  except Exception as e:
+    # Print for debugging and re-raise as ValueError so upstream callers catch it.
+    print("OpenAI-compatible LLM error:", repr(e))
+    raise ValueError("LLM ERROR")
 
 def temp_sleep(seconds=0.1):
   time.sleep(seconds)
